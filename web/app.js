@@ -74,7 +74,7 @@ async function testConnection() {
     status.className = 'text-sm text-blue-600';
 
     // 선택된 모델로 먼저 시도, 실패 시 다른 모델 자동 시도
-    const fallbackModels = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash', 'gemini-2.0-flash-lite']
+    const fallbackModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-flash-lite']
         .filter(m => m !== model);
     const modelsToTry = [model, ...fallbackModels];
 
