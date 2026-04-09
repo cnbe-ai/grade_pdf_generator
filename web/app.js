@@ -271,14 +271,13 @@ async function callGeminiAPI(prompt, systemPrompt, apiKey, model, maxTokens = 80
         const err = await res.json().catch(() => ({}));
         const errMsg = err.error?.message || `HTTP ${res.status}`;
         // 사용자 친화적 에러 메시지
-        if (errMsg.includes('quota') || errMsg.includes('Quota')) {
+        if (errMsg.includes('quota') || errMsg.includes('Quota') || errMsg.includes('rate') || errMsg.includes('429')) {
             throw new Error(
-                'API 할당량 초과 오류입니다.\n\n' +
+                'API 요청 제한 오류입니다.\n\n' +
                 '해결 방법:\n' +
-                '1. Google Cloud Console(console.cloud.google.com)에서 "Generative Language API"를 활성화하세요.\n' +
-                '2. 결제 계정을 연결하세요 (무료 범위 내에서는 과금되지 않습니다).\n' +
-                '3. 모델을 "gemini-1.5-flash"로 변경해 보세요.\n' +
-                '4. API 키를 aistudio.google.com/apikey 에서 새로 발급해 보세요.'
+                '1. 잠시 후 다시 시도하세요 (무료 요금제는 분당 15회 제한).\n' +
+                '2. Google Cloud Console(console.cloud.google.com)에서 "Generative Language API"를 활성화하세요.\n' +
+                '3. API 키를 aistudio.google.com/apikey 에서 새로 발급해 보세요.'
             );
         }
         if (errMsg.includes('API_KEY_INVALID') || errMsg.includes('invalid')) {
@@ -384,14 +383,21 @@ async function startGeneration() {
     appendLog(`과목: ${subject} / 단원: ${unit}`);
     appendLog(`문제 유형: ${types.join(', ')}`);
 
-    // Run all levels in parallel
-    const promises = ['advanced', 'standard', 'remedial'].map(level =>
-        generateForLevel(level, counts[level], avgScores[level], types, subject, unit, showHints, apiKey, model)
-            .then(result => { state.generated[level] = result; })
-            .catch(e => { appendLog(`[${LEVEL_KR[level]}] 최종 실패: ${e.message}`); })
-    );
-
-    await Promise.all(promises);
+    // 무료 요금제 분당 요청 제한 방지를 위해 순차 실행 (사이에 2초 대기)
+    for (const level of ['advanced', 'standard', 'remedial']) {
+        if (state.cancelled) break;
+        try {
+            const result = await generateForLevel(level, counts[level], avgScores[level], types, subject, unit, showHints, apiKey, GEMINI_MODEL);
+            state.generated[level] = result;
+        } catch (e) {
+            appendLog(`[${LEVEL_KR[level]}] 최종 실패: ${e.message}`);
+        }
+        // 다음 수준 호출 전 2초 대기 (rate limit 방지)
+        if (level !== 'remedial' && !state.cancelled) {
+            appendLog('요청 제한 방지를 위해 잠시 대기 중...');
+            await sleep(2000);
+        }
+    }
 
     const total = Object.values(state.generated).reduce((s, r) => s + (r?.problems?.length || 0), 0);
     appendLog(`전체 완료! 총 ${total}문항 생성됨`);
