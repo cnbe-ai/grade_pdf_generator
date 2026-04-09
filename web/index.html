@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>수준별 개별화 학습 자료 자동 생성 시스템</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Nanum+Gothic:wght@400;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['"Nanum Gothic"', 'sans-serif'] }
+                }
+            }
+        }
+    </script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.2/html2pdf.bundle.min.js"></script>
+    <style>
+        body { font-family: 'Nanum Gothic', sans-serif; }
+        .tab-btn.active { border-bottom-color: #2563eb; color: #2563eb; font-weight: 700; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .progress-bar { transition: width 0.3s ease; }
+        input[type="file"] { display: none; }
+        .drop-zone { border: 2px dashed #cbd5e1; transition: all 0.2s; }
+        .drop-zone.dragover { border-color: #2563eb; background: #eff6ff; }
+        .level-advanced { color: #1565C0; }
+        .level-standard { color: #F57F17; }
+        .level-remedial { color: #2E7D32; }
+        #log-area { font-family: 'Consolas', monospace; font-size: 13px; }
+        /* PDF styles */
+        .pdf-page { width: 210mm; padding: 20mm; font-family: 'Nanum Gothic', sans-serif; }
+        .pdf-page h1 { font-size: 22px; }
+        .pdf-page h2 { font-size: 16px; }
+        .pdf-page p, .pdf-page li { font-size: 12px; line-height: 1.8; }
+        @media print { .no-print { display: none !important; } }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<!-- Header -->
+<header class="bg-white shadow-sm border-b">
+    <div class="max-w-5xl mx-auto px-6 py-4">
+        <h1 class="text-xl font-extrabold text-gray-800">수준별 개별화 학습 자료 자동 생성 시스템</h1>
+        <p class="text-sm text-gray-500 mt-1">Google Gemini AI 기반 물리 맞춤 문제지 생성기</p>
+    </div>
+</header>
+
+<!-- Tab Navigation -->
+<nav class="bg-white border-b no-print">
+    <div class="max-w-5xl mx-auto px-6 flex gap-0">
+        <button class="tab-btn active px-5 py-3 text-sm border-b-2 border-transparent hover:text-blue-600 transition" onclick="switchTab('api')">① API 설정</button>
+        <button class="tab-btn px-5 py-3 text-sm border-b-2 border-transparent hover:text-blue-600 transition" onclick="switchTab('data')">② 데이터 &amp; 설정</button>
+        <button class="tab-btn px-5 py-3 text-sm border-b-2 border-transparent hover:text-blue-600 transition" onclick="switchTab('generate')">③ 문제 생성</button>
+        <button class="tab-btn px-5 py-3 text-sm border-b-2 border-transparent hover:text-blue-600 transition" onclick="switchTab('pdf')">④ PDF 출력</button>
+    </div>
+</nav>
+
+<main class="max-w-5xl mx-auto px-6 py-6">
+
+<!-- ═══ Tab 1: API 설정 ═══ -->
+<div id="tab-api" class="tab-content active space-y-6">
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-bold mb-4 text-gray-700">Google Gemini API 설정</h2>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">API 키</label>
+                <div class="flex gap-2">
+                    <input id="apiKey" type="password" placeholder="Google AI Studio에서 발급받은 API 키 입력"
+                           class="flex-1 border rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                    <button onclick="toggleKeyVisibility()" class="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50" id="toggleKeyBtn">표시</button>
+                </div>
+                <p class="text-xs text-gray-400 mt-1">
+                    <a href="https://aistudio.google.com/apikey" target="_blank" class="text-blue-500 hover:underline">Google AI Studio</a>에서 무료로 API 키를 발급받을 수 있습니다.
+                </p>
+            </div>
+            <div class="flex gap-4 items-end">
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">모델</label>
+                    <select id="modelSelect" class="border rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                        <option value="gemini-2.0-flash">gemini-2.0-flash (추천, 무료)</option>
+                        <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite (경량)</option>
+                        <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                        <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                    </select>
+                </div>
+                <button onclick="testConnection()" class="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+                    연결 테스트
+                </button>
+                <span id="connStatus" class="text-sm"></span>
+            </div>
+        </div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-bold mb-4 text-gray-700">학교/출제자 정보 (PDF 표지용)</h2>
+        <div class="grid grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">학교명</label>
+                <input id="schoolName" type="text" placeholder="예: OO고등학교"
+                       class="w-full border rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">출제자명</label>
+                <input id="teacherName" type="text" placeholder="예: 홍길동"
+                       class="w-full border rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+            </div>
+        </div>
+        <div class="mt-4 flex gap-2">
+            <button onclick="saveSettings()" class="px-4 py-2 bg-gray-600 text-white rounded-lg text-sm hover:bg-gray-700">설정 저장</button>
+            <button onclick="loadSettings()" class="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50">설정 불러오기</button>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ Tab 2: 데이터 & 설정 ═══ -->
+<div id="tab-data" class="tab-content space-y-6">
+    <!-- 파일 업로드 -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-bold mb-4 text-gray-700">성적 파일 불러오기</h2>
+        <div class="drop-zone rounded-lg p-8 text-center cursor-pointer" id="dropZone"
+             onclick="document.getElementById('fileInput').click()">
+            <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" onchange="handleFileUpload(event)">
+            <p class="text-gray-500 text-sm">Excel(.xlsx) 또는 CSV(.csv) 파일을 드래그하거나 클릭하여 선택하세요</p>
+            <p id="fileInfo" class="text-blue-600 font-medium mt-2 hidden"></p>
+        </div>
+        <div class="mt-3 flex gap-2">
+            <button onclick="loadSampleData()" class="px-4 py-2 text-sm border rounded-lg hover:bg-blue-50 text-blue-600 border-blue-300">
+                샘플 데이터 사용
+            </button>
+        </div>
+        <!-- 컬럼 매핑 -->
+        <div id="columnMapping" class="mt-4 hidden">
+            <div class="flex gap-4 items-end">
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">학생이름 컬럼</label>
+                    <select id="nameCol" class="border rounded-lg px-3 py-2 text-sm"></select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">점수 컬럼</label>
+                    <select id="scoreCol" class="border rounded-lg px-3 py-2 text-sm"></select>
+                </div>
+                <button onclick="classifyStudents()" class="px-5 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700">
+                    분류 실행
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 분류 기준 -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-bold mb-4 text-gray-700">수준 분류 기준</h2>
+        <div class="grid grid-cols-2 gap-6">
+            <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">상위 심화 (%): <span id="advPctLabel" class="text-blue-600 font-bold">30%</span></label>
+                <input type="range" id="advPct" min="10" max="50" value="30" class="w-full"
+                       oninput="document.getElementById('advPctLabel').textContent=this.value+'%'">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">하위 보충 (%): <span id="remPctLabel" class="text-green-600 font-bold">30%</span></label>
+                <input type="range" id="remPct" min="10" max="50" value="30" class="w-full"
+                       oninput="document.getElementById('remPctLabel').textContent=this.value+'%'">
+            </div>
+        </div>
+    </div>
+
+    <!-- 과목/단원 -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-bold mb-4 text-gray-700">과목/단원 설정</h2>
+        <div class="flex gap-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">과목</label>
+                <select id="subject" class="border rounded-lg px-3 py-2 text-sm">
+                    <option>통합과학</option>
+                    <option selected>물리학</option>
+                    <option>물질과 에너지</option>
+                    <option>전자기와 양자</option>
+                    <option>일반물리학</option>
+                </select>
+            </div>
+            <div class="flex-1">
+                <label class="block text-sm font-medium text-gray-600 mb-1">단원</label>
+                <input id="unit" type="text" placeholder='예: "등가속도 운동", "전기장과 전위"'
+                       class="w-full border rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+            </div>
+        </div>
+    </div>
+
+    <!-- 분류 결과 -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-bold mb-4 text-gray-700">수준별 분류 결과 미리보기</h2>
+        <div id="statsBar" class="hidden mb-3 flex gap-4 text-sm">
+            <span class="level-advanced font-bold" id="statAdv"></span>
+            <span class="level-standard font-bold" id="statStd"></span>
+            <span class="level-remedial font-bold" id="statRem"></span>
+        </div>
+        <div class="overflow-auto max-h-80 border rounded-lg">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50 sticky top-0">
+                    <tr><th class="px-4 py-2 text-left">학생이름</th><th class="px-4 py-2 text-center">점수</th><th class="px-4 py-2 text-center">수준</th></tr>
+                </thead>
+                <tbody id="studentTable">
+                    <tr><td colspan="3" class="px-4 py-8 text-center text-gray-400">파일을 불러온 후 분류를 실행하세요</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ Tab 3: 문제 생성 ═══ -->
+<div id="tab-generate" class="tab-content space-y-6">
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-bold mb-4 text-gray-700">문제 유형 선택</h2>
+        <div class="flex gap-6">
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" checked class="problem-type" value="객관식"> 객관식 (5지선다)</label>
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" checked class="problem-type" value="단답형"> 단답형</label>
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" checked class="problem-type" value="서술형"> 서술형</label>
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" checked class="problem-type" value="계산"> 계산 문제</label>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-bold mb-4 text-gray-700">수준별 문제 수</h2>
+        <div class="flex gap-6 items-center">
+            <div>
+                <label class="block text-sm text-gray-600">심화</label>
+                <input id="advCount" type="number" value="10" min="1" max="30" class="w-20 border rounded px-2 py-1 text-sm text-center">
+            </div>
+            <div>
+                <label class="block text-sm text-gray-600">표준</label>
+                <input id="stdCount" type="number" value="10" min="1" max="30" class="w-20 border rounded px-2 py-1 text-sm text-center">
+            </div>
+            <div>
+                <label class="block text-sm text-gray-600">보충</label>
+                <input id="remCount" type="number" value="10" min="1" max="30" class="w-20 border rounded px-2 py-1 text-sm text-center">
+            </div>
+            <label class="flex items-center gap-2 text-sm ml-4">
+                <input type="checkbox" id="showHints"> 힌트 표시
+            </label>
+        </div>
+    </div>
+
+    <div class="flex gap-3">
+        <button id="generateBtn" onclick="startGeneration()"
+                class="px-8 py-3 bg-blue-600 text-white rounded-lg font-bold text-base hover:bg-blue-700 transition shadow">
+            ▶ 문제 생성 시작
+        </button>
+        <button id="cancelBtn" onclick="cancelGeneration()" disabled
+                class="px-5 py-3 border border-red-300 text-red-600 rounded-lg text-sm hover:bg-red-50 disabled:opacity-40">
+            취소
+        </button>
+    </div>
+
+    <!-- 프로그레스 -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-bold mb-4 text-gray-700">생성 진행 상황</h2>
+        <div class="space-y-3">
+            <div class="flex items-center gap-3">
+                <span class="w-12 text-sm font-bold level-advanced">심화</span>
+                <div class="flex-1 bg-gray-200 rounded-full h-4 overflow-hidden">
+                    <div id="progAdv" class="progress-bar h-full bg-blue-600 rounded-full" style="width:0%"></div>
+                </div>
+                <span id="progAdvLabel" class="w-16 text-sm text-right text-gray-500">대기 중</span>
+            </div>
+            <div class="flex items-center gap-3">
+                <span class="w-12 text-sm font-bold level-standard">표준</span>
+                <div class="flex-1 bg-gray-200 rounded-full h-4 overflow-hidden">
+                    <div id="progStd" class="progress-bar h-full bg-yellow-500 rounded-full" style="width:0%"></div>
+                </div>
+                <span id="progStdLabel" class="w-16 text-sm text-right text-gray-500">대기 중</span>
+            </div>
+            <div class="flex items-center gap-3">
+                <span class="w-12 text-sm font-bold level-remedial">보충</span>
+                <div class="flex-1 bg-gray-200 rounded-full h-4 overflow-hidden">
+                    <div id="progRem" class="progress-bar h-full bg-green-600 rounded-full" style="width:0%"></div>
+                </div>
+                <span id="progRemLabel" class="w-16 text-sm text-right text-gray-500">대기 중</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 로그 -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-bold mb-3 text-gray-700">생성 로그</h2>
+        <div id="log-area" class="bg-gray-900 text-green-400 rounded-lg p-4 h-48 overflow-y-auto text-xs leading-relaxed"></div>
+    </div>
+</div>
+
+<!-- ═══ Tab 4: PDF 출력 ═══ -->
+<div id="tab-pdf" class="tab-content space-y-6">
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-bold mb-4 text-gray-700">PDF 저장</h2>
+        <div class="flex gap-3 flex-wrap">
+            <button onclick="downloadPDF('advanced')" class="px-5 py-3 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+                심화 PDF 저장
+            </button>
+            <button onclick="downloadPDF('standard')" class="px-5 py-3 bg-yellow-500 text-white rounded-lg text-sm font-medium hover:bg-yellow-600 transition">
+                표준 PDF 저장
+            </button>
+            <button onclick="downloadPDF('remedial')" class="px-5 py-3 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition">
+                보충 PDF 저장
+            </button>
+            <button onclick="downloadAllPDFs()" class="px-6 py-3 bg-gray-800 text-white rounded-lg text-sm font-bold hover:bg-gray-900 transition">
+                전체 저장
+            </button>
+        </div>
+    </div>
+
+    <!-- 미리보기 -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-bold mb-4 text-gray-700">문제 미리보기</h2>
+        <div class="flex gap-2 mb-4">
+            <button onclick="previewLevel('advanced')" class="preview-tab px-4 py-2 text-sm rounded-lg border border-blue-300 text-blue-600 hover:bg-blue-50">심화</button>
+            <button onclick="previewLevel('standard')" class="preview-tab px-4 py-2 text-sm rounded-lg border border-yellow-300 text-yellow-600 hover:bg-yellow-50">표준</button>
+            <button onclick="previewLevel('remedial')" class="preview-tab px-4 py-2 text-sm rounded-lg border border-green-300 text-green-600 hover:bg-green-50">보충</button>
+        </div>
+        <div id="previewArea" class="border rounded-lg p-4 min-h-[200px] text-sm text-gray-500">
+            문제를 생성한 후 미리보기를 확인하세요.
+        </div>
+    </div>
+</div>
+
+</main>
+
+<!-- 상태바 -->
+<footer class="fixed bottom-0 left-0 right-0 bg-white border-t px-6 py-2 text-sm text-gray-500 no-print">
+    <span id="statusBar">준비 완료</span>
+</footer>
+
+<!-- Hidden PDF Render Area -->
+<div id="pdfRender" style="position:absolute;left:-9999px;top:0;"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
