@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+dist/
+build/
+*.spec
+output/*.pdf
+output/cache/
+logs/
+fonts/*.ttf
+sample_data/
+*.egg-info/
+.venv/
+venv/
