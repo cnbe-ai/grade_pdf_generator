@@ -2,6 +2,8 @@
 // 수준별 개별화 학습 자료 자동 생성 시스템 - Web App
 // ═══════════════════════════════════════════════════
 
+const GEMINI_MODEL = 'gemini-2.5-flash';
+
 // ── State ──
 const state = {
     rawData: null,        // parsed spreadsheet rows
@@ -68,45 +70,18 @@ function toggleKeyVisibility() {
 async function testConnection() {
     const apiKey = document.getElementById('apiKey').value.trim();
     if (!apiKey) { alert('API 키를 입력하세요.'); return; }
-    const model = document.getElementById('modelSelect').value;
     const status = document.getElementById('connStatus');
     status.textContent = '연결 테스트 중...';
     status.className = 'text-sm text-blue-600';
-
-    // 선택된 모델로 먼저 시도, 실패 시 다른 모델 자동 시도
-    const fallbackModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-flash-lite']
-        .filter(m => m !== model);
-    const modelsToTry = [model, ...fallbackModels];
-
-    for (const tryModel of modelsToTry) {
-        try {
-            if (tryModel !== model) {
-                status.textContent = `${tryModel} 시도 중...`;
-            }
-            await callGeminiAPI("테스트입니다. '연결 성공'이라고만 답하세요.", null, apiKey, tryModel, 50);
-            // 성공!
-            if (tryModel !== model) {
-                document.getElementById('modelSelect').value = tryModel;
-                status.textContent = `✓ 연결 성공! (모델: ${tryModel})`;
-                setStatus(`API 연결 성공 - 사용 가능한 모델: ${tryModel}`);
-            } else {
-                status.textContent = '✓ 연결 성공!';
-                setStatus('API 연결 성공');
-            }
-            status.className = 'text-sm text-green-600 font-bold';
-            return;
-        } catch (e) {
-            // quota 에러이고 아직 시도할 모델이 남았으면 다음 모델로
-            const isQuotaError = e.message.includes('할당량') || e.message.includes('quota') || e.message.includes('Quota');
-            const isLastModel = tryModel === modelsToTry[modelsToTry.length - 1];
-            if (!isQuotaError || isLastModel) {
-                status.textContent = '✗ 연결 실패';
-                status.className = 'text-sm text-red-600 font-bold';
-                alert('연결 실패:\n\n' + e.message);
-                return;
-            }
-            // quota 에러면 다음 모델 시도
-        }
+    try {
+        await callGeminiAPI("테스트입니다. '연결 성공'이라고만 답하세요.", null, apiKey, GEMINI_MODEL, 50);
+        status.textContent = '✓ 연결 성공!';
+        status.className = 'text-sm text-green-600 font-bold';
+        setStatus('API 연결 성공');
+    } catch (e) {
+        status.textContent = '✗ 연결 실패';
+        status.className = 'text-sm text-red-600 font-bold';
+        alert('연결 실패:\n\n' + e.message);
     }
 }
 
@@ -114,7 +89,6 @@ function saveSettings() {
     const settings = {
         schoolName: document.getElementById('schoolName').value,
         teacherName: document.getElementById('teacherName').value,
-        model: document.getElementById('modelSelect').value,
     };
     localStorage.setItem('physics_gen_settings', JSON.stringify(settings));
     alert('설정이 저장되었습니다.');
@@ -126,7 +100,6 @@ function loadSettings() {
         const s = JSON.parse(saved);
         if (s.schoolName) document.getElementById('schoolName').value = s.schoolName;
         if (s.teacherName) document.getElementById('teacherName').value = s.teacherName;
-        if (s.model) document.getElementById('modelSelect').value = s.model;
     }
 }
 
@@ -386,7 +359,7 @@ async function startGeneration() {
     if (!unit) { alert('탭 ②에서 단원을 입력하세요.'); switchTab('data'); return; }
     const types = [...document.querySelectorAll('.problem-type:checked')].map(el => el.value);
     if (types.length === 0) { alert('최소 한 개 이상의 문제 유형을 선택하세요.'); return; }
-    const model = document.getElementById('modelSelect').value;
+    const model = GEMINI_MODEL;
     const showHints = document.getElementById('showHints').checked;
 
     const counts = {
