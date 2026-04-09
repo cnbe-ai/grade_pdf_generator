@@ -2,7 +2,9 @@
 // 수준별 개별화 학습 자료 자동 생성 시스템 - Web App
 // ═══════════════════════════════════════════════════
 
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.5-pro'];
+let currentModelIndex = 0;
+function getModel() { return GEMINI_MODELS[currentModelIndex]; }
 
 // ── State ──
 const state = {
@@ -71,18 +73,38 @@ async function testConnection() {
     const apiKey = document.getElementById('apiKey').value.trim();
     if (!apiKey) { alert('API 키를 입력하세요.'); return; }
     const status = document.getElementById('connStatus');
-    status.textContent = '연결 테스트 중...';
+    status.textContent = '사용 가능한 모델 탐색 중...';
     status.className = 'text-sm text-blue-600';
-    try {
-        await callGeminiAPI("테스트입니다. '연결 성공'이라고만 답하세요.", null, apiKey, GEMINI_MODEL, 50);
-        status.textContent = '✓ 연결 성공!';
-        status.className = 'text-sm text-green-600 font-bold';
-        setStatus('API 연결 성공');
-    } catch (e) {
-        status.textContent = '✗ 연결 실패';
-        status.className = 'text-sm text-red-600 font-bold';
-        alert('연결 실패:\n\n' + e.message);
+
+    for (let i = 0; i < GEMINI_MODELS.length; i++) {
+        const model = GEMINI_MODELS[i];
+        status.textContent = `${model} 테스트 중...`;
+        try {
+            await callGeminiAPI("테스트입니다. '연결 성공'이라고만 답하세요.", null, apiKey, model, 50);
+            currentModelIndex = i;
+            status.textContent = `✓ 연결 성공! (${model})`;
+            status.className = 'text-sm text-green-600 font-bold';
+            setStatus(`API 연결 성공 - 모델: ${model}`);
+            updateModelDisplay();
+            return;
+        } catch (e) {
+            const isOverload = e.message.includes('과부하') || e.message.includes('high demand') || e.message.includes('503');
+            const isQuota = e.message.includes('요청 제한') || e.message.includes('quota');
+            if (isOverload || isQuota) {
+                // 이 모델은 과부하/제한 → 다음 모델 시도
+                continue;
+            }
+            // 그 외 에러 (잘못된 키 등)는 바로 실패
+            status.textContent = '✗ 연결 실패';
+            status.className = 'text-sm text-red-600 font-bold';
+            alert('연결 실패:\n\n' + e.message);
+            return;
+        }
     }
+    // 모든 모델 실패
+    status.textContent = '✗ 모든 모델 과부하';
+    status.className = 'text-sm text-red-600 font-bold';
+    alert('현재 모든 Gemini 모델이 과부하 상태입니다.\n잠시 후(5~10분) 다시 시도해 주세요.');
 }
 
 function saveSettings() {
@@ -317,52 +339,57 @@ function setProgress(level, value) {
     }
 }
 
-async function generateForLevel(level, count, avgScore, types, subject, unit, showHints, apiKey, model) {
+async function generateForLevel(level, count, avgScore, types, subject, unit, showHints, apiKey) {
     const kr = LEVEL_KR[level];
     const levelPrompt = LEVEL_PROMPTS[level];
     let hintInst = (showHints || level === 'remedial') ? '\n- 각 문제에 풀이 힌트를 포함하세요.' : '';
     const prompt = `과목: ${subject}\n단원: ${unit}\n학생 수준: ${level} (평균 점수: ${avgScore}점)\n문제 유형: ${types.join(', ')}\n문제 수: ${count}문항\n\n${levelPrompt}\n${hintInst}\n\n위 조건에 맞는 ${count}개의 물리 문제를 JSON 형식으로 생성하세요.`;
 
-    const maxRetries = 5;
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        if (state.cancelled) return { problems: [], level_summary: '생성 취소됨' };
-        try {
-            appendLog(`[${kr}] 문제 생성 시도 ${attempt + 1}/${maxRetries}...`);
-            setProgress(level, 0.1 + attempt * 0.05);
-            let text = await callGeminiAPI(prompt, SYSTEM_PROMPT, apiKey, model);
-            text = text.trim();
-            // Remove code blocks
-            if (text.startsWith('```')) {
-                const lines = text.split('\n');
-                text = lines.slice(1).join('\n');
-                if (text.endsWith('```')) text = text.slice(0, -3);
+    // 모든 모델을 순서대로 시도, 각 모델당 2회 재시도
+    for (let mi = 0; mi < GEMINI_MODELS.length; mi++) {
+        const model = GEMINI_MODELS[(currentModelIndex + mi) % GEMINI_MODELS.length];
+        for (let attempt = 0; attempt < 2; attempt++) {
+            if (state.cancelled) return { problems: [], level_summary: '생성 취소됨' };
+            try {
+                appendLog(`[${kr}] ${model} 시도 ${attempt + 1}/2...`);
+                setProgress(level, 0.05 + mi * 0.2 + attempt * 0.1);
+                let text = await callGeminiAPI(prompt, SYSTEM_PROMPT, apiKey, model);
                 text = text.trim();
-            }
-            const result = JSON.parse(text);
-            appendLog(`[${kr}] 완료! ${result.problems?.length || 0}문항 생성됨`);
-            setProgress(level, 1.0);
-            return result;
-        } catch (e) {
-            const isOverload = e.message.includes('high demand') || e.message.includes('overloaded') || e.message.includes('503');
-            const isRateLimit = e.message.includes('요청 제한') || e.message.includes('quota') || e.message.includes('429');
-
-            if (attempt === maxRetries - 1) {
-                appendLog(`[${kr}] 최종 실패: ${e.message}`);
-                setProgress(level, -1);
-                throw e;
-            }
-
-            // 서버 과부하: 더 오래 대기 (15초, 30초, 45초, 60초)
-            if (isOverload || isRateLimit) {
-                const waitSec = (attempt + 1) * 15;
-                appendLog(`[${kr}] 서버 과부하 - ${waitSec}초 후 재시도...`);
-                await sleep(waitSec * 1000);
-            } else {
-                appendLog(`[${kr}] 오류 - 3초 후 재시도...`);
-                await sleep(3000);
+                if (text.startsWith('```')) {
+                    const lines = text.split('\n');
+                    text = lines.slice(1).join('\n');
+                    if (text.endsWith('```')) text = text.slice(0, -3);
+                    text = text.trim();
+                }
+                const result = JSON.parse(text);
+                appendLog(`[${kr}] 완료! (${model}) ${result.problems?.length || 0}문항 생성됨`);
+                setProgress(level, 1.0);
+                currentModelIndex = (currentModelIndex + mi) % GEMINI_MODELS.length;
+                updateModelDisplay();
+                return result;
+            } catch (e) {
+                const isOverload = e.message.includes('과부하') || e.message.includes('high demand') || e.message.includes('503');
+                const isRateLimit = e.message.includes('요청 제한') || e.message.includes('quota') || e.message.includes('429');
+                if (isOverload || isRateLimit) {
+                    if (attempt === 0) {
+                        appendLog(`[${kr}] ${model} 과부하 - 10초 후 재시도...`);
+                        await sleep(10000);
+                    } else {
+                        appendLog(`[${kr}] ${model} 과부하 지속 - 다른 모델로 전환...`);
+                        await sleep(3000);
+                        break; // 다음 모델로
+                    }
+                } else {
+                    appendLog(`[${kr}] 오류: ${e.message}`);
+                    await sleep(3000);
+                }
             }
         }
     }
+    // 모든 모델 실패
+    appendLog(`[${kr}] 모든 모델 실패`);
+    setProgress(level, -1);
+    throw new Error('현재 모든 Gemini 모델이 과부하 상태입니다. 5~10분 후 다시 시도해 주세요.');
 }
 
 async function startGeneration() {
@@ -373,7 +400,6 @@ async function startGeneration() {
     if (!unit) { alert('탭 ②에서 단원을 입력하세요.'); switchTab('data'); return; }
     const types = [...document.querySelectorAll('.problem-type:checked')].map(el => el.value);
     if (types.length === 0) { alert('최소 한 개 이상의 문제 유형을 선택하세요.'); return; }
-    const model = GEMINI_MODEL;
     const showHints = document.getElementById('showHints').checked;
 
     const counts = {
@@ -402,7 +428,7 @@ async function startGeneration() {
     for (const level of ['advanced', 'standard', 'remedial']) {
         if (state.cancelled) break;
         try {
-            const result = await generateForLevel(level, counts[level], avgScores[level], types, subject, unit, showHints, apiKey, GEMINI_MODEL);
+            const result = await generateForLevel(level, counts[level], avgScores[level], types, subject, unit, showHints, apiKey);
             state.generated[level] = result;
         } catch (e) {
             appendLog(`[${LEVEL_KR[level]}] 최종 실패: ${e.message}`);
@@ -575,6 +601,11 @@ function esc(str) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function updateModelDisplay() {
+    const el = document.getElementById('currentModel');
+    if (el) el.textContent = getModel();
+}
 
 function setStatus(msg) {
     document.getElementById('statusBar').textContent = msg;
