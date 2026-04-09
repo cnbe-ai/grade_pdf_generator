@@ -72,15 +72,41 @@ async function testConnection() {
     const status = document.getElementById('connStatus');
     status.textContent = '연결 테스트 중...';
     status.className = 'text-sm text-blue-600';
-    try {
-        const res = await callGeminiAPI("테스트입니다. '연결 성공'이라고만 답하세요.", null, apiKey, model, 50);
-        status.textContent = '✓ 연결 성공!';
-        status.className = 'text-sm text-green-600 font-bold';
-        setStatus('API 연결 성공');
-    } catch (e) {
-        status.textContent = '✗ 연결 실패';
-        status.className = 'text-sm text-red-600 font-bold';
-        alert('연결 실패: ' + e.message);
+
+    // 선택된 모델로 먼저 시도, 실패 시 다른 모델 자동 시도
+    const fallbackModels = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro']
+        .filter(m => m !== model);
+    const modelsToTry = [model, ...fallbackModels];
+
+    for (const tryModel of modelsToTry) {
+        try {
+            if (tryModel !== model) {
+                status.textContent = `${tryModel} 시도 중...`;
+            }
+            await callGeminiAPI("테스트입니다. '연결 성공'이라고만 답하세요.", null, apiKey, tryModel, 50);
+            // 성공!
+            if (tryModel !== model) {
+                document.getElementById('modelSelect').value = tryModel;
+                status.textContent = `✓ 연결 성공! (모델: ${tryModel})`;
+                setStatus(`API 연결 성공 - 사용 가능한 모델: ${tryModel}`);
+            } else {
+                status.textContent = '✓ 연결 성공!';
+                setStatus('API 연결 성공');
+            }
+            status.className = 'text-sm text-green-600 font-bold';
+            return;
+        } catch (e) {
+            // quota 에러이고 아직 시도할 모델이 남았으면 다음 모델로
+            const isQuotaError = e.message.includes('할당량') || e.message.includes('quota') || e.message.includes('Quota');
+            const isLastModel = tryModel === modelsToTry[modelsToTry.length - 1];
+            if (!isQuotaError || isLastModel) {
+                status.textContent = '✗ 연결 실패';
+                status.className = 'text-sm text-red-600 font-bold';
+                alert('연결 실패:\n\n' + e.message);
+                return;
+            }
+            // quota 에러면 다음 모델 시도
+        }
     }
 }
 
@@ -270,7 +296,25 @@ async function callGeminiAPI(prompt, systemPrompt, apiKey, model, maxTokens = 80
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `HTTP ${res.status}`);
+        const errMsg = err.error?.message || `HTTP ${res.status}`;
+        // 사용자 친화적 에러 메시지
+        if (errMsg.includes('quota') || errMsg.includes('Quota')) {
+            throw new Error(
+                'API 할당량 초과 오류입니다.\n\n' +
+                '해결 방법:\n' +
+                '1. Google Cloud Console(console.cloud.google.com)에서 "Generative Language API"를 활성화하세요.\n' +
+                '2. 결제 계정을 연결하세요 (무료 범위 내에서는 과금되지 않습니다).\n' +
+                '3. 모델을 "gemini-1.5-flash"로 변경해 보세요.\n' +
+                '4. API 키를 aistudio.google.com/apikey 에서 새로 발급해 보세요.'
+            );
+        }
+        if (errMsg.includes('API_KEY_INVALID') || errMsg.includes('invalid')) {
+            throw new Error('API 키가 올바르지 않습니다. Google AI Studio에서 키를 다시 확인해주세요.');
+        }
+        if (errMsg.includes('permission') || errMsg.includes('Permission')) {
+            throw new Error('API 권한이 없습니다. Google Cloud Console에서 "Generative Language API"를 활성화해주세요.');
+        }
+        throw new Error(errMsg);
     }
     const data = await res.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
