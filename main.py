@@ -16,7 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 
 # 프로젝트 모듈
 from grade_analyzer import GradeAnalyzer, generate_sample_data
-from ai_engine import AIEngine, SUBJECTS, AVAILABLE_MODELS, DEFAULT_MODEL
+from ai_engine import AIEngine, SUBJECTS, AVAILABLE_MODELS, DEFAULT_MODEL  # noqa: F401
 from pdf_builder import PDFBuilder
 
 # ── 로깅 설정 ──
