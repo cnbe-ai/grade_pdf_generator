@@ -280,6 +280,9 @@ async function callGeminiAPI(prompt, systemPrompt, apiKey, model, maxTokens = 80
                 '3. API 키를 aistudio.google.com/apikey 에서 새로 발급해 보세요.'
             );
         }
+        if (errMsg.includes('high demand') || errMsg.includes('overloaded') || res.status === 503) {
+            throw new Error('서버 과부하 상태입니다. 잠시 후 자동으로 재시도합니다.');
+        }
         if (errMsg.includes('API_KEY_INVALID') || errMsg.includes('invalid')) {
             throw new Error('API 키가 올바르지 않습니다. Google AI Studio에서 키를 다시 확인해주세요.');
         }
@@ -320,12 +323,12 @@ async function generateForLevel(level, count, avgScore, types, subject, unit, sh
     let hintInst = (showHints || level === 'remedial') ? '\n- 각 문제에 풀이 힌트를 포함하세요.' : '';
     const prompt = `과목: ${subject}\n단원: ${unit}\n학생 수준: ${level} (평균 점수: ${avgScore}점)\n문제 유형: ${types.join(', ')}\n문제 수: ${count}문항\n\n${levelPrompt}\n${hintInst}\n\n위 조건에 맞는 ${count}개의 물리 문제를 JSON 형식으로 생성하세요.`;
 
-    const maxRetries = 3;
+    const maxRetries = 5;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
         if (state.cancelled) return { problems: [], level_summary: '생성 취소됨' };
         try {
             appendLog(`[${kr}] 문제 생성 시도 ${attempt + 1}/${maxRetries}...`);
-            setProgress(level, 0.1 + attempt * 0.1);
+            setProgress(level, 0.1 + attempt * 0.05);
             let text = await callGeminiAPI(prompt, SYSTEM_PROMPT, apiKey, model);
             text = text.trim();
             // Remove code blocks
@@ -340,12 +343,24 @@ async function generateForLevel(level, count, avgScore, types, subject, unit, sh
             setProgress(level, 1.0);
             return result;
         } catch (e) {
-            appendLog(`[${kr}] 오류 (시도 ${attempt + 1}): ${e.message}`);
+            const isOverload = e.message.includes('high demand') || e.message.includes('overloaded') || e.message.includes('503');
+            const isRateLimit = e.message.includes('요청 제한') || e.message.includes('quota') || e.message.includes('429');
+
             if (attempt === maxRetries - 1) {
+                appendLog(`[${kr}] 최종 실패: ${e.message}`);
                 setProgress(level, -1);
                 throw e;
             }
-            await sleep(2 ** attempt * 1000);
+
+            // 서버 과부하: 더 오래 대기 (15초, 30초, 45초, 60초)
+            if (isOverload || isRateLimit) {
+                const waitSec = (attempt + 1) * 15;
+                appendLog(`[${kr}] 서버 과부하 - ${waitSec}초 후 재시도...`);
+                await sleep(waitSec * 1000);
+            } else {
+                appendLog(`[${kr}] 오류 - 3초 후 재시도...`);
+                await sleep(3000);
+            }
         }
     }
 }
