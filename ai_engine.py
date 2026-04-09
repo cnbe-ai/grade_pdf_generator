@@ -1,6 +1,6 @@
 """
-Claude API 호출 및 문제 생성 로직
-수준별 맞춤 물리 문제를 Claude AI를 통해 생성한다.
+Gemini API 호출 및 문제 생성 로직
+수준별 맞춤 물리 문제를 Google Gemini AI를 통해 생성한다.
 """
 
 import json
@@ -10,7 +10,8 @@ import threading
 import time
 from typing import Callable, Optional
 
-import anthropic
+from google import genai
+from google.genai import types
 
 logger = logging.getLogger(__name__)
 
@@ -73,25 +74,40 @@ SUBJECTS = [
     "일반물리학",
 ]
 
+AVAILABLE_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+]
+
+DEFAULT_MODEL = "gemini-2.0-flash"
+
 
 class AIEngine:
-    """Claude API를 사용하여 수준별 물리 문제를 생성하는 엔진"""
+    """Google Gemini API를 사용하여 수준별 물리 문제를 생성하는 엔진"""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, api_key: str, model: str = DEFAULT_MODEL):
         self.api_key = api_key
         self.model = model
-        self.client = anthropic.Anthropic(api_key=api_key)
+        self.client = genai.Client(api_key=api_key)
         self._cancel_event = threading.Event()
+
+    def _reinit_client(self):
+        """API 키나 모델이 변경된 경우 클라이언트를 재초기화한다."""
+        self.client = genai.Client(api_key=self.api_key)
 
     def test_connection(self) -> bool:
         """API 연결을 테스트한다."""
         try:
-            response = self.client.messages.create(
+            response = self.client.models.generate_content(
                 model=self.model,
-                max_tokens=50,
-                messages=[{"role": "user", "content": "테스트입니다. '연결 성공'이라고만 답하세요."}],
+                contents="테스트입니다. '연결 성공'이라고만 답하세요.",
+                config=types.GenerateContentConfig(
+                    maxOutputTokens=50,
+                ),
             )
-            text = response.content[0].text
+            text = response.text
             logger.info(f"API 연결 테스트 성공: {text}")
             return True
         except Exception as e:
@@ -100,10 +116,7 @@ class AIEngine:
 
     def list_models(self) -> list:
         """사용 가능한 모델 목록을 반환한다."""
-        return [
-            "claude-sonnet-4-20250514",
-            "claude-haiku-4-5-20251001",
-        ]
+        return AVAILABLE_MODELS
 
     def generate_problems(
         self,
@@ -156,13 +169,16 @@ class AIEngine:
             if self._cancel_event.is_set():
                 return {"problems": [], "level_summary": "생성 취소됨"}
             try:
-                response = self.client.messages.create(
+                response = self.client.models.generate_content(
                     model=self.model,
-                    max_tokens=8000,
-                    system=SYSTEM_PROMPT,
-                    messages=[{"role": "user", "content": user_prompt}],
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        systemInstruction=SYSTEM_PROMPT,
+                        maxOutputTokens=8000,
+                        temperature=0.7,
+                    ),
                 )
-                text = response.content[0].text.strip()
+                text = response.text.strip()
                 # JSON 파싱 - 코드 블록 제거
                 if text.startswith("```"):
                     lines = text.split("\n")
@@ -179,7 +195,7 @@ class AIEngine:
                 logger.warning(f"[{level}] JSON 파싱 실패 (시도 {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
                     raise ValueError(f"AI 응답을 파싱할 수 없습니다: {e}")
-            except anthropic.APIError as e:
+            except Exception as e:
                 logger.warning(f"[{level}] API 오류 (시도 {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
                     raise

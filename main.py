@@ -16,7 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 
 # 프로젝트 모듈
 from grade_analyzer import GradeAnalyzer, generate_sample_data
-from ai_engine import AIEngine, SUBJECTS
+from ai_engine import AIEngine, SUBJECTS, AVAILABLE_MODELS, DEFAULT_MODEL
 from pdf_builder import PDFBuilder
 
 # ── 로깅 설정 ──
@@ -51,7 +51,7 @@ def load_config() -> dict:
         "problems_per_level": 10,
         "problem_types": ["객관식", "단답형", "서술형", "계산"],
         "output_dir": "output",
-        "model": "claude-sonnet-4-20250514",
+        "model": "gemini-2.0-flash",
     }
     if os.path.exists(CONFIG_PATH):
         try:
@@ -126,7 +126,7 @@ class Application(tk.Tk):
     # 탭 1: API 설정
     # ═══════════════════════════════════════════
     def _build_tab_api(self):
-        frame = ttk.LabelFrame(self.tab_api, text="Anthropic API 설정", padding=15)
+        frame = ttk.LabelFrame(self.tab_api, text="Google Gemini API 설정", padding=15)
         frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
 
         # API 키
@@ -147,12 +147,9 @@ class Application(tk.Tk):
 
         # 모델 선택
         ttk.Label(frame, text="모델:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        self.model_var = tk.StringVar(value=self.config_data.get("model", "claude-sonnet-4-20250514"))
+        self.model_var = tk.StringVar(value=self.config_data.get("model", DEFAULT_MODEL))
         self.model_combo = ttk.Combobox(frame, textvariable=self.model_var, width=40, state="readonly")
-        self.model_combo["values"] = [
-            "claude-sonnet-4-20250514",
-            "claude-haiku-4-5-20251001",
-        ]
+        self.model_combo["values"] = AVAILABLE_MODELS
         self.model_combo.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
 
         ttk.Separator(frame, orient=tk.HORIZONTAL).grid(
@@ -213,7 +210,7 @@ class Application(tk.Tk):
         self.config_data = load_config()
         self.school_var.set(self.config_data.get("school_name", ""))
         self.teacher_var.set(self.config_data.get("teacher_name", ""))
-        self.model_var.set(self.config_data.get("model", "claude-sonnet-4-20250514"))
+        self.model_var.set(self.config_data.get("model", DEFAULT_MODEL))
         messagebox.showinfo("불러오기 완료", "설정을 불러왔습니다.")
 
     # ═══════════════════════════════════════════
@@ -504,7 +501,7 @@ class Application(tk.Tk):
         else:
             self.ai_engine.api_key = api_key
             self.ai_engine.model = self.model_var.get()
-            self.ai_engine.client = __import__("anthropic").Anthropic(api_key=api_key)
+            self.ai_engine._reinit_client()
 
         # 수준별 설정 구성
         stats = self.analyzer.get_level_stats()

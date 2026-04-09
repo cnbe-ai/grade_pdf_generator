@@ -8,5 +8,5 @@
     "problems_per_level": 10,
     "problem_types": ["객관식", "단답형", "서술형", "계산"],
     "output_dir": "output",
-    "model": "claude-sonnet-4-20250514"
+    "model": "gemini-2.0-flash"
 }
